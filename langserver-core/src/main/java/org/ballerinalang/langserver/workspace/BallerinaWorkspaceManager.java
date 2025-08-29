@@ -43,7 +43,7 @@ import io.ballerina.projects.ProjectException;
 import io.ballerina.projects.ProjectKind;
 import io.ballerina.projects.directory.BuildProject;
 import io.ballerina.projects.directory.ProjectLoader;
-import io.ballerina.projects.directory.SingleFileProject;
+import io.ballerina.projects.directory.WorkspaceProject;
 import io.ballerina.projects.util.ProjectConstants;
 import io.ballerina.projects.util.ProjectPaths;
 import io.ballerina.tools.diagnostics.Diagnostic;
@@ -1463,25 +1463,50 @@ public class BallerinaWorkspaceManager implements WorkspaceManager {
         ProjectKind projectKind = projectKindAndProjectRootPair.getLeft();
         Path projectRoot = projectKindAndProjectRootPair.getRight();
         try {
-            Project project;
-            if (projectKind == ProjectKind.BUILD_PROJECT) {
-                project = BuildProject.load(projectRoot, buildOptions);
 
-                // TODO: Remove this once https://github.com/ballerina-platform/ballerina-lang/issues/43972 is resolved
-                // Save the dependencies.toml to resolve the inconsistencies issue in the subsequent builds
-                if (BallerinaCompilerApi.getInstance().hasOptimizedDependencyCompilation(project)) {
-                    BuildOptions newOptions = BuildOptions.builder()
+            Project project = ProjectLoader.load(filePath).project();
+            // TODO: Remove this once https://github.com/ballerina-platform/ballerina-lang/issues/43972 is resolved
+            // Save the dependencies.toml to resolve the inconsistencies issue in the subsequent builds
+            if (BallerinaCompilerApi.getInstance().hasOptimizedDependencyCompilation(project)) {
+                BuildOptions newOptions = BuildOptions.builder()
                             .setOffline(CommonUtil.COMPILE_OFFLINE)
                             .setSticky(false)
                             .build();
-                    project = BuildProject.load(projectRoot, newOptions);
-                }
-            } else if (projectKind == ProjectKind.SINGLE_FILE_PROJECT) {
-                project = SingleFileProject.load(projectRoot, buildOptions);
-            } else {
-                // Projects other than single file and build will use the ProjectLoader.
-                project = ProjectLoader.loadProject(projectRoot, buildOptions);
+                project = ProjectLoader.load(projectRoot, newOptions).project();
             }
+
+            if (project.kind().equals(ProjectKind.WORKSPACE_PROJECT)) {
+                WorkspaceProject workspaceProject = (WorkspaceProject) project;
+                List<BuildProject> topologicallySortedList = workspaceProject.getResolution().dependencyGraph()
+                        .toTopologicallySortedList();
+                for (BuildProject buildProject : topologicallySortedList) {
+                    if (buildProject.sourceRoot().equals(projectRoot)) {
+                        return buildProject;
+                    }
+                }
+                throw new ProjectException("Project not found in the workspace: " + projectRoot);
+
+            }
+
+//            Project project;
+//            if (projectKind == ProjectKind.BUILD_PROJECT) {
+//                project = BuildProject.load(projectRoot, buildOptions);
+//
+//                // TODO: Remove this once https://github.com/ballerina-platform/ballerina-lang/issues/43972 is resolved
+//                // Save the dependencies.toml to resolve the inconsistencies issue in the subsequent builds
+//                if (BallerinaCompilerApi.getInstance().hasOptimizedDependencyCompilation(project)) {
+//                    BuildOptions newOptions = BuildOptions.builder()
+//                            .setOffline(CommonUtil.COMPILE_OFFLINE)
+//                            .setSticky(false)
+//                            .build();
+//                    project = BuildProject.load(projectRoot, newOptions);
+//                }
+//            } else if (projectKind == ProjectKind.SINGLE_FILE_PROJECT) {
+//                project = SingleFileProject.load(projectRoot, buildOptions);
+//            } else {
+//                // Projects other than single file and build will use the ProjectLoader.
+//                project = ProjectLoader.loadProject(projectRoot, buildOptions);
+//            }
             clientLogger.logTrace("Operation '" + operationName +
                     "' {project: '" + projectRoot.toUri().toString() + "' kind: '" +
                     project.kind().name().toLowerCase(Locale.getDefault()) + "'} created");
